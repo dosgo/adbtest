@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/sha512"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -31,8 +32,8 @@ import (
 )
 
 const (
-	clientName = "adb pair client\000"
-	serverName = "adb pair server\000"
+	clientName = "adb pair client\x00"
+	serverName = "adb pair server\x00"
 	info       = "adb pairing_auth aes-128-gcm key"
 	hkdfKeyLen = 16 // 128 bits
 
@@ -46,13 +47,21 @@ type PairingAuthCtx struct {
 	encIV      uint64
 }
 
-func CreateAlice(password string) (*PairingAuthCtx, error) {
+func CreateAlice(password []byte) (*PairingAuthCtx, error) {
 	return createPairingAuthCtx(password)
 }
 
-func createPairingAuthCtx(_password string) (*PairingAuthCtx, error) {
+func createPairingAuthCtx(_password []byte) (*PairingAuthCtx, error) {
+	// 创建一个新的 SHA-512 哈希器
+	hasher := sha512.New()
+	// 写入数据
+	hasher.Write([]byte(_password))
+	// 获取哈希结果
+	hash := hasher.Sum(nil)
 
-	var password = gospake2.NewPassword(_password)
+	var password = gospake2.NewPassword("")
+	password.FromBytes(hash)
+	fmt.Printf("_password:%v\r\n", password)
 	var spake = gospake2.SPAKE2A(password, gospake2.NewIdentityA(clientName), gospake2.NewIdentityB(serverName))
 	grp := group.Group(ed25519group.Ed25519{})
 	spake.SetGroup(grp)
@@ -82,13 +91,13 @@ func (p *PairingAuthCtx) ProcessMsg(theirMsg []byte) (bool, error) {
 		fmt.Printf("Error generating key: %v\n", err)
 
 	}
-	fmt.Printf("p.secretKey[:]:%s\r\n", string(p.secretKey))
+	fmt.Printf("p.secretKey:%s\r\n", string(p.secretKey))
 
 	return true, nil
 }
 
 func (p *PairingAuthCtx) Encrypt(in []byte) ([]byte, error) {
-	block, err := aes.NewCipher(p.secretKey[:])
+	block, err := aes.NewCipher(p.secretKey)
 	if err != nil {
 		return nil, err
 	}
@@ -101,13 +110,13 @@ func (p *PairingAuthCtx) Encrypt(in []byte) ([]byte, error) {
 	iv := make([]byte, gcmIVLen)
 	binary.LittleEndian.PutUint64(iv, p.encIV)
 	p.encIV++
+	log.Printf("iv:%v\r\n", iv)
 
 	return aesGCM.Seal(nil, iv, in, nil), nil
 }
 
 func (p *PairingAuthCtx) Decrypt(in []byte) ([]byte, error) {
-	fmt.Printf("p.secretKey[:]:%s\r\n", string(p.secretKey[:]))
-	block, err := aes.NewCipher(p.secretKey[:])
+	block, err := aes.NewCipher(p.secretKey)
 	if err != nil {
 		return nil, err
 	}
@@ -117,16 +126,16 @@ func (p *PairingAuthCtx) Decrypt(in []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	nonceSize := aesGCM.NonceSize()
-	if len(in) < nonceSize {
+	iv := make([]byte, gcmIVLen)
+	if len(in) < gcmIVLen {
 		return nil, fmt.Errorf("ciphertext too short")
 	}
 
-	nonce, ciphertext := in[:nonceSize], in[nonceSize:]
-	binary.LittleEndian.PutUint64(nonce, p.decIV)
+	ciphertext := in
+	binary.LittleEndian.PutUint64(iv, p.decIV)
 	p.decIV++
 
-	plaintext, err := aesGCM.Open(nil, nonce, ciphertext, nil)
+	plaintext, err := aesGCM.Open(nil, iv, ciphertext, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -187,20 +196,21 @@ func main() {
 		InsecureSkipVerify: true,
 	}
 
-	var password = "923146"
+	var password = "384046"
 	// 使用TLS配置创建一个TCP连接
-	conn, err := tls.Dial("tcp", "172.30.17.16:40701", tlsConfig)
+	conn, err := tls.Dial("tcp", "172.30.17.16:38287", tlsConfig)
 	if err != nil {
 		log.Fatalf("Failed to connect: %v", err)
 	}
+	conn.Handshake()
 	defer conn.Close()
 	state := conn.ConnectionState()
 
-	keyMaterial, err := state.ExportKeyingMaterial("adb-label\u0000", nil, 64)
+	keyMaterial, err := state.ExportKeyingMaterial("adb-label\x00", nil, 64)
 
-	fmt.Printf("keyMaterial:%v\r\n", keyMaterial)
+	fmt.Printf("keyMaterial:%v err:%v\r\n", keyMaterial, err)
 	// 创建Alice（客户端）
-	alice, err := CreateAlice(password + string(keyMaterial))
+	alice, err := CreateAlice(append([]byte(password), keyMaterial...))
 	if err != nil {
 		log.Fatalf("Failed to create Alice: %v", err)
 	}
@@ -230,8 +240,6 @@ func main() {
 	serverMsg := buf[:n]
 
 	fmt.Printf("buf:%v\r\n", serverMsg)
-
-	// 'H' in ASCII
 
 	// 在 original 前面增加 newByte
 	newSlice := append([]byte{0x42}, serverMsg...)

@@ -19,7 +19,6 @@ import (
 	"log"
 	"math"
 	"math/big"
-	"net"
 	"os"
 	"time"
 
@@ -186,9 +185,9 @@ func main() {
 		InsecureSkipVerify: true,
 	}
 
-	var password = "866503"
+	var password = "773456"
 	// 使用TLS配置创建一个TCP连接
-	conn, err := tls.Dial("tcp", "192.168.78.70:36869", tlsConfig)
+	conn, err := tls.Dial("tcp", "192.168.78.70:34407", tlsConfig)
 	if err != nil {
 		log.Fatalf("Failed to connect: %v", err)
 	}
@@ -237,7 +236,7 @@ func main() {
 	}
 
 	// 测试加密和解密
-	peerInfo := genPeerInfo("test")
+	peerInfo := genPeerInfo("Dosgo")
 	fmt.Printf("peerInfo:%v\r\n", peerInfo)
 	ciphertext, err := alice.Encrypt(peerInfo)
 	if err != nil {
@@ -311,59 +310,49 @@ func packetHeader(version byte, msgType byte, payloadSize uint32) []byte {
 	return sendBuf.Bytes()
 }
 
-func generateCert(certFile, keyFile string) error {
-	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+func generateCert(_certFile, keyFile string) error {
+	// 生成 RSA 私钥
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
-		return err
+		log.Fatalf("生成私钥失败: %v", err)
 	}
 
-	// 设置证书模板
-	notBefore := time.Now()
-	notAfter := notBefore.Add(365 * 24 * time.Hour) // 1年有效期
-
-	serialNumberLimit := new(big.Int).Lsh(big.NewInt(1), 128)
-	serialNumber, err := rand.Int(rand.Reader, serialNumberLimit)
-	if err != nil {
-		return err
-	}
-
+	// 创建证书模板
 	template := x509.Certificate{
-		SerialNumber: serialNumber,
+		SerialNumber: big.NewInt(1),
 		Subject: pkix.Name{
-			CommonName:   "localhost", // 添加 Common Name
-			Organization: []string{"Your Organization"},
+			CommonName: "Dosgo",
 		},
-		NotBefore:             notBefore,
-		NotAfter:              notAfter,
-		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		NotBefore:             time.Now(),
+		NotAfter:              time.Now().AddDate(1, 0, 0),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		BasicConstraintsValid: true,
-		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1")},
-		DNSNames:              []string{"localhost"},
 	}
 
-	// 创建证书
-	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
+	// 自签名证书
+	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &privateKey.PublicKey, privateKey)
 	if err != nil {
-		return err
+		log.Fatalf("创建证书失败: %v", err)
 	}
 
-	// 将证书写入文件
-	certOut, err := os.Create(certFile)
+	// 编码私钥为 PEM 格式并写入文件
+	privateKeyPEM := &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(privateKey)}
+	privateKeyFile, err := os.Create(keyFile)
 	if err != nil {
-		return err
+		log.Fatalf("创建私钥文件失败: %v", err)
 	}
-	defer certOut.Close()
-	pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
+	defer privateKeyFile.Close()
+	pem.Encode(privateKeyFile, privateKeyPEM)
 
-	// 将私钥写入文件
-	keyOut, err := os.Create(keyFile)
+	// 编码证书为 PEM 格式并写入文件
+	certPEM := &pem.Block{Type: "CERTIFICATE", Bytes: derBytes}
+	certFile, err := os.Create(_certFile)
 	if err != nil {
-		return err
+		log.Fatalf("创建证书文件失败: %v", err)
 	}
-	defer keyOut.Close()
-	pem.Encode(keyOut, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(priv)})
-
+	defer certFile.Close()
+	pem.Encode(certFile, certPEM)
 	return nil
 }
 

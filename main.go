@@ -7,7 +7,6 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
-	"crypto/sha512"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -50,18 +49,12 @@ func CreateAlice(password []byte) (*PairingAuthCtx, error) {
 }
 
 func createPairingAuthCtx(myRole int, _password []byte) (*PairingAuthCtx, error) {
-	// 创建一个新的 SHA-512 哈希器
-	hasher := sha512.New()
-	// 写入数据
-	hasher.Write([]byte(_password))
-	// 获取哈希结果
-	hash := hasher.Sum(nil)
 
 	alice, _ := spake2.SPAKE2_CTX_new(myRole, []byte(clientName), []byte(serverName))
 
 	return &PairingAuthCtx{
 		spacke2Ctx: alice,
-		password:   hash,
+		password:   _password,
 		secretKey:  make([]byte, 16),
 	}, nil
 }

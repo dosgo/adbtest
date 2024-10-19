@@ -2,6 +2,7 @@ module adbtest
 
 go 1.22.7
 
-require salsa.debian.org/vasudev/gospake2 v0.0.0-20210510093858-d91629950ad1
-
-require golang.org/x/crypto v0.28.0 // indirect
+require (
+	github.com/dosgo/spake2-go v0.0.0-20241019170010-3b8be66d26f7
+	golang.org/x/crypto v0.28.0
+)

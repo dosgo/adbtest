@@ -23,16 +23,13 @@ import (
 	"os"
 	"time"
 
+	"github.com/dosgo/spake2-go/spake2"
 	"golang.org/x/crypto/hkdf"
-
-	"salsa.debian.org/vasudev/gospake2"
-	"salsa.debian.org/vasudev/gospake2/ed25519group"
-	group "salsa.debian.org/vasudev/gospake2/groups"
 )
 
 const (
-	clientName = "adb pair client\000"
-	serverName = "adb pair server\000"
+	clientName = "adb pair client\x00"
+	serverName = "adb pair server\x00"
 	info       = "adb pairing_auth aes-128-gcm key"
 	hkdfKeyLen = 16 // 128 bits
 
@@ -40,48 +37,50 @@ const (
 )
 
 type PairingAuthCtx struct {
-	spacke2Ctx *gospake2.SPAKE2
+	spacke2Ctx *spake2.Spake2Ctx
 	secretKey  []byte
+	password   string
 	decIV      uint64
 	encIV      uint64
 }
 
 func CreateAlice(password string) (*PairingAuthCtx, error) {
-	return createPairingAuthCtx(password)
+	return createPairingAuthCtx(0, password)
 }
 
-func createPairingAuthCtx(_password string) (*PairingAuthCtx, error) {
+func createPairingAuthCtx(myRole int, _password string) (*PairingAuthCtx, error) {
 
-	var password = gospake2.NewPassword(_password)
-	var spake = gospake2.SPAKE2A(password, gospake2.NewIdentityA(clientName), gospake2.NewIdentityB(serverName))
-	grp := group.Group(ed25519group.Ed25519{})
-	spake.SetGroup(grp)
+	alice, _ := spake2.SPAKE2_CTX_new(myRole, []byte(clientName), []byte(serverName))
+	fmt.Printf("_passwordlen:%s\r\n", len(_password))
 	return &PairingAuthCtx{
-		spacke2Ctx: &spake,
+		spacke2Ctx: alice,
+		password:   _password,
+		secretKey:  make([]byte, 16),
 	}, nil
 }
 
 func (p *PairingAuthCtx) GetMsg() ([]byte, error) {
-	return p.spacke2Ctx.Start(), nil
+	return p.spacke2Ctx.SPAKE2_generate_msg([]byte(p.password))
 }
 
 func (p *PairingAuthCtx) ProcessMsg(theirMsg []byte) (bool, error) {
 	var err error
-	buf, err := p.spacke2Ctx.Finish(theirMsg)
+	buf, err := p.spacke2Ctx.SPAKE2_process_msg(theirMsg)
 	if err != nil {
 		return false, err
 	}
-	var keyInfo = "adb pairing_auth aes-128-gcm key"
+
+	//var keyInfo = "adb pairing_auth aes-128-gcm key"
 
 	// 创建一个新的HKDF实例，使用SHA-256作为哈希函数
-	hkdfExtractor := hkdf.New(sha256.New, buf, nil, []byte(keyInfo))
-
-	p.secretKey = make([]byte, hkdfKeyLen)
+	//hkdfExtractor := hkdf.New(sha256.New, buf, nil, []byte(keyInfo))
+	p.secretKey = hkdf.Extract(sha256.New, buf, nil)
+	//p.secretKey = make([]byte, hkdfKeyLen)
 	// 生成密钥
-	if _, err := hkdfExtractor.Read(p.secretKey); err != nil {
-		fmt.Printf("Error generating key: %v\n", err)
+	//if _, err := hkdfExtractor.Read(p.secretKey); err != nil {
+	//	fmt.Printf("Error generating key: %v\n", err)
 
-	}
+	//}
 	fmt.Printf("p.secretKey[:]:%s\r\n", string(p.secretKey))
 
 	return true, nil
@@ -106,7 +105,6 @@ func (p *PairingAuthCtx) Encrypt(in []byte) ([]byte, error) {
 }
 
 func (p *PairingAuthCtx) Decrypt(in []byte) ([]byte, error) {
-	fmt.Printf("p.secretKey[:]:%s\r\n", string(p.secretKey[:]))
 	block, err := aes.NewCipher(p.secretKey[:])
 	if err != nil {
 		return nil, err
@@ -187,16 +185,16 @@ func main() {
 		InsecureSkipVerify: true,
 	}
 
-	var password = "923146"
+	var password = "390342"
 	// 使用TLS配置创建一个TCP连接
-	conn, err := tls.Dial("tcp", "172.30.17.16:40701", tlsConfig)
+	conn, err := tls.Dial("tcp", "192.168.78.70:34743", tlsConfig)
 	if err != nil {
 		log.Fatalf("Failed to connect: %v", err)
 	}
 	defer conn.Close()
 	state := conn.ConnectionState()
 
-	keyMaterial, err := state.ExportKeyingMaterial("adb-label\u0000", nil, 64)
+	keyMaterial, err := state.ExportKeyingMaterial("adb-label\x00", nil, 64)
 
 	fmt.Printf("keyMaterial:%v\r\n", keyMaterial)
 	// 创建Alice（客户端）
@@ -212,7 +210,7 @@ func main() {
 	}
 	fmt.Printf("clientMsg:%v\r\n", clientMsg)
 
-	headerBuf := packetHeader(1, 0, uint32(len(clientMsg[1:])))
+	headerBuf := packetHeader(1, 0, uint32(len(clientMsg[:])))
 	_, err = conn.Write(headerBuf)
 	fmt.Printf("hand:%v\r\n", headerBuf)
 	_, err = conn.Write(clientMsg[1:])
@@ -231,12 +229,7 @@ func main() {
 
 	fmt.Printf("buf:%v\r\n", serverMsg)
 
-	// 'H' in ASCII
-
-	// 在 original 前面增加 newByte
-	newSlice := append([]byte{0x42}, serverMsg...)
-
-	ok, err := alice.ProcessMsg(newSlice)
+	ok, err := alice.ProcessMsg(serverMsg)
 	if !ok || err != nil {
 		log.Fatalf("Failed to process server message: %v", err)
 	}

@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"math"
 	"math/big"
 	"os"
 	"time"
@@ -133,30 +132,22 @@ func (p *PairingAuthCtx) Decrypt(in []byte) ([]byte, error) {
 
 func genPeerInfo(name string) []byte {
 	publicKey, _ := readRSAPublicKeyFromFile("ddd.pem")
-
 	ADB_RSA_PUB_KEY := byte(0)
-	var ANDROID_PUBKEY_ENCODED_SIZE = 524
-
-	// 计算pkeySize
-	pkeySize := 4 * int(math.Ceil(float64(ANDROID_PUBKEY_ENCODED_SIZE)/3.0))
-
 	// 创建一个足够大的缓冲区
 	buf := new(bytes.Buffer)
-	buf.Grow(pkeySize + len(name) + 2)
-
 	// 编码公钥
-	encodedPublicKey := base64.StdEncoding.EncodeToString(publicKey)
+	publicKeybyte, _ := encodeRSAPublicKey(publicKey)
+	encodedPublicKey := base64.StdEncoding.EncodeToString(publicKeybyte)
 	if _, err := buf.Write([]byte(encodedPublicKey)); err != nil {
 		return nil
 	}
-
+	fmt.Printf("encodedPublicKeylen%d\r\n", len(encodedPublicKey))
 	// 获取并写入用户信息
 	userInfo := fmt.Sprintf(" %s\x00", name)
 	if _, err := buf.Write([]byte(userInfo)); err != nil {
 		return nil
 	}
 	return append([]byte{ADB_RSA_PUB_KEY}, buf.Bytes()...)
-
 }
 
 func main() {
@@ -185,9 +176,9 @@ func main() {
 		InsecureSkipVerify: true,
 	}
 
-	var password = "282596"
+	var password = "355611"
 	// 使用TLS配置创建一个TCP连接
-	conn, err := tls.Dial("tcp", "192.168.78.209:40617", tlsConfig)
+	conn, err := tls.Dial("tcp", "192.168.78.209:45075", tlsConfig)
 	if err != nil {
 		log.Fatalf("Failed to connect: %v", err)
 	}
@@ -361,7 +352,7 @@ func fileExists(filename string) bool {
 	return !os.IsNotExist(err)
 }
 
-func readRSAPublicKeyFromFile(filename string) ([]byte, error) {
+func readRSAPublicKeyFromFile(filename string) (*rsa.PublicKey, error) {
 	// 读取文件内容
 	pemData, err := os.ReadFile(filename)
 	if err != nil {
@@ -385,67 +376,80 @@ func readRSAPublicKeyFromFile(filename string) ([]byte, error) {
 	if !ok {
 		return nil, errors.New("the public key is not an RSA public key")
 	}
-
-	// 将公钥转换为DER编码的字节切片
-	derBytes, err := x509.MarshalPKIXPublicKey(rsaPub)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal public key: %w", err)
-	}
-
-	return derBytes, nil
+	return rsaPub, nil
 }
 
-const ANDROID_PUBKEY_MODULUS_SIZE = 2048             // 假设设置公钥模数大小为 2048 位，需根据实际情况调整
-const ANDROID_PUBKEY_ENCODED_SIZE = 2048 + 4 + 4 + 4 // 根据公钥模数大小加上一些额外字段的大小
+const ANDROID_PUBKEY_MODULUS_SIZE = 256
+const ANDROID_PUBKEY_ENCODED_SIZE = ANDROID_PUBKEY_MODULUS_SIZE + 8
 
-func encodeRSAPublicKey(publicKey *big.Int) ([]byte, error) {
-	// 如果公钥长度小于 ANDROID_PUBKEY_MODULUS_SIZE，返回错误
-	if publicKey.BitLen() < ANDROID_PUBKEY_MODULUS_SIZE {
-		return nil, fmt.Errorf("Invalid key length %d", publicKey.BitLen())
+func bigEndianToLittleEndianPadded(size int, data []byte) []byte {
+	result := make([]byte, size)
+	for i, j := 0, len(data)-1; i < size && j >= 0; i, j = i+1, j-1 {
+		result[i] = data[j]
+	}
+	return result
+}
+
+func encodeRSAPublicKey(publicKey *rsa.PublicKey) ([]byte, error) {
+	modulusBytes := publicKey.N.Bytes()
+	if len(modulusBytes) < ANDROID_PUBKEY_MODULUS_SIZE {
+		return nil, errors.New("Invalid key length")
 	}
 
-	// 创建字节缓冲区并设置小端序
 	keyStruct := make([]byte, ANDROID_PUBKEY_ENCODED_SIZE)
-	buffer := binary.LittleEndian
+	// Store the modulus size.
+	binary.LittleEndian.PutUint32(keyStruct[0:4], uint32(ANDROID_PUBKEY_MODULUS_SIZE/4))
 
-	// 计算并存储 n0inv = -1 / N[0] mod 2 ^ 32
-	r32 := big.NewInt(1 << 32)
-	n0inv := new(big.Int).Set(publicKey)
-	tmp := new(big.Int).Set(publicKey)
-	// do n0inv mod r32
-	n0inv.Mod(n0inv, r32)
-	tmp.Set(n0inv)
-	n0inv.ModInverse(n0inv, r32)
-	tmp.Set(n0inv)
-	n0inv.Sub(r32, n0inv)
+	// Compute and store n0inv = -1 / N[0] mod 2^32.
+	r32 := big.NewInt(1).Lsh(big.NewInt(1), 32)
+	n0 := big.NewInt(0).SetBytes(modulusBytes[:4])
+	n0inv := big.NewInt(0).Mod(n0, r32)
+	n0inv = n0inv.ModInverse(n0inv, r32)
+	n0inv = r32.Sub(r32, n0inv)
+	binary.LittleEndian.PutUint32(keyStruct[4:8], uint32(n0inv.Int64()))
 
-	// 将 n0inv 写入 keyStruct
-	buffer.PutUint32(keyStruct[0:4], uint32(n0inv.Int64()))
+	// Store the modulus.
+	modulusLittleEndian := bigEndianToLittleEndianPadded(ANDROID_PUBKEY_MODULUS_SIZE, modulusBytes)
+	copy(keyStruct[8:], modulusLittleEndian)
 
-	// 将公钥 n 以小端序写入 keyStruct
-	nBytes := publicKey.Bytes()
-	for i, j := 0, len(nBytes)-1; i < j; i, j = i+1, j-1 {
-		nBytes[i], nBytes[j] = nBytes[j], nBytes[i]
-	}
-	copy(keyStruct[4:4+len(nBytes)], nBytes)
+	// Compute and store rr = (2^(rsa_size)) ^ 2 mod N.
+	rr := big.NewInt(1).Lsh(big.NewInt(1), ANDROID_PUBKEY_MODULUS_SIZE*8)
+	rr = rr.Exp(rr, big.NewInt(2), publicKey.N)
+	rrLittleEndian := bigEndianToLittleEndianPadded(ANDROID_PUBKEY_MODULUS_SIZE, rr.Bytes())
+	copy(keyStruct[8+ANDROID_PUBKEY_MODULUS_SIZE:], rrLittleEndian)
 
-	// 计算 rr
-	rr := new(big.Int).Set(publicKey)
-	rr.Lsh(rr, uint(ANDROID_PUBKEY_MODULUS_SIZE))
-	tmp.Set(rr)
-	rr.Exp(rr, big.NewInt(2), publicKey)
-
-	// 将 rr 以小端序写入 keyStruct
-	rrBytes := rr.Bytes()
-	for i, j := 0, len(rrBytes)-1; i < j; i, j = i+1, j-1 {
-		rrBytes[i], rrBytes[j] = rrBytes[j], rrBytes[i]
-	}
-	copy(keyStruct[4+len(nBytes):4+len(nBytes)+len(rrBytes)], rrBytes)
-
-	// 将公钥的指数 e 写入 keyStruct
-	// 这里假设公钥的指数 e 已知，比如 e := big.NewInt(65537)
-	e := big.NewInt(65537)
-	buffer.PutUint32(keyStruct[4+len(nBytes)+len(rrBytes):4+len(nBytes)+len(rrBytes)+4], uint32(e.Int64()))
-
+	// Store the exponent.
+	binary.LittleEndian.PutUint32(keyStruct[ANDROID_PUBKEY_ENCODED_SIZE-4:], uint32(publicKey.E))
 	return keyStruct, nil
 }
+
+/*
+ func RSAPublicKeyDecode(@NonNull byte[] androidPubkey)
+            throws InvalidKeyException, NoSuchAlgorithmException, InvalidKeySpecException {
+        BigInteger n;
+        BigInteger e;
+
+        // Check size is large enough and the modulus size is correct.
+        if (androidPubkey.length < ANDROID_PUBKEY_ENCODED_SIZE) {
+            throw new InvalidKeyException("Invalid key length");
+        }
+        ByteBuffer keyStruct = ByteBuffer.wrap(androidPubkey).order(ByteOrder.LITTLE_ENDIAN);
+        int modulusSize = keyStruct.getInt();
+        if (modulusSize != ANDROID_PUBKEY_MODULUS_SIZE_WORDS) {
+            throw new InvalidKeyException("Invalid modulus length.");
+        }
+
+        // Convert the modulus to big-endian byte order as expected by BN_bin2bn.
+        byte[] modulus = new byte[ANDROID_PUBKEY_MODULUS_SIZE];
+        keyStruct.position(8);
+        keyStruct.get(modulus);
+        n = new BigInteger(1, swapEndianness(modulus));
+
+        // Read the exponent.
+        keyStruct.position(520);
+        e = BigInteger.valueOf(keyStruct.getInt());
+
+        KeyFactory keyFactory = KeyFactory.getInstance("RSA");
+        RSAPublicKeySpec publicKeySpec = new RSAPublicKeySpec(n, e);
+        return (RSAPublicKey) keyFactory.generatePublic(publicKeySpec);
+    }*/

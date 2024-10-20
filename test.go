@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
@@ -31,31 +32,33 @@ func encodeRSAPublicKey(publicKeyN *big.Int, publicKeyE int) ([]byte, error) {
 		return nil, errors.New("Invalid key length")
 	}
 
-	keyStruct := make([]byte, ANDROID_PUBKEY_ENCODED_SIZE)
+	var keyStruct bytes.Buffer
 	// Store the modulus size.
-	binary.LittleEndian.PutUint32(keyStruct[0:4], uint32(ANDROID_PUBKEY_MODULUS_SIZE/4))
+
+	binary.Write(&keyStruct, binary.LittleEndian, uint32(ANDROID_PUBKEY_MODULUS_SIZE/4))
 
 	// Compute and store n0inv = -1 / N[0] mod 2^32.
 	r32 := big.NewInt(1).Lsh(big.NewInt(1), 32)
-	n0 := big.NewInt(0).SetBytes(modulusBytes[:4])
+	n0 := big.NewInt(0).SetBytes(modulusBytes)
 	n0inv := big.NewInt(0).Mod(n0, r32)
 	n0inv = n0inv.ModInverse(n0inv, r32)
 	n0inv = r32.Sub(r32, n0inv)
-	binary.LittleEndian.PutUint32(keyStruct[4:8], uint32(n0inv.Int64()))
+	binary.Write(&keyStruct, binary.LittleEndian, uint32(n0inv.Int64()))
 
 	// Store the modulus.
 	modulusLittleEndian := bigEndianToLittleEndianPadded(ANDROID_PUBKEY_MODULUS_SIZE, modulusBytes)
-	copy(keyStruct[8:], modulusLittleEndian)
+
+	keyStruct.Write(modulusLittleEndian)
 
 	// Compute and store rr = (2^(rsa_size)) ^ 2 mod N.
 	rr := big.NewInt(1).Lsh(big.NewInt(1), ANDROID_PUBKEY_MODULUS_SIZE*8)
 	rr = rr.Exp(rr, big.NewInt(2), publicKeyN)
 	rrLittleEndian := bigEndianToLittleEndianPadded(ANDROID_PUBKEY_MODULUS_SIZE, rr.Bytes())
-	copy(keyStruct[8+ANDROID_PUBKEY_MODULUS_SIZE:], rrLittleEndian)
+	keyStruct.Write(rrLittleEndian)
 
 	// Store the exponent.
-	binary.LittleEndian.PutUint32(keyStruct[ANDROID_PUBKEY_ENCODED_SIZE-4:], uint32(publicKeyE))
-	return keyStruct, nil
+	binary.Write(&keyStruct, binary.LittleEndian, uint32(publicKeyE))
+	return keyStruct.Bytes(), nil
 }
 func bigEndianToLittleEndianPadded(size int, data []byte) []byte {
 	result := make([]byte, size)

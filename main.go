@@ -151,7 +151,7 @@ func genPeerInfo(name string) []byte {
 	}
 
 	// 获取并写入用户信息
-	userInfo := fmt.Sprintf(" %s\u0000", name)
+	userInfo := fmt.Sprintf(" %s\x00", name)
 	if _, err := buf.Write([]byte(userInfo)); err != nil {
 		return nil
 	}
@@ -185,9 +185,9 @@ func main() {
 		InsecureSkipVerify: true,
 	}
 
-	var password = "773456"
+	var password = "282596"
 	// 使用TLS配置创建一个TCP连接
-	conn, err := tls.Dial("tcp", "192.168.78.70:34407", tlsConfig)
+	conn, err := tls.Dial("tcp", "192.168.78.209:40617", tlsConfig)
 	if err != nil {
 		log.Fatalf("Failed to connect: %v", err)
 	}
@@ -211,10 +211,10 @@ func main() {
 	}
 	fmt.Printf("clientMsg:%v\r\n", clientMsg)
 
-	headerBuf := packetHeader(1, 0, uint32(len(clientMsg[:])))
+	headerBuf := packetHeader(1, 0, uint32(len(clientMsg)))
 	_, err = conn.Write(headerBuf)
 	fmt.Printf("hand:%v\r\n", headerBuf)
-	_, err = conn.Write(clientMsg[1:])
+	_, err = conn.Write(clientMsg)
 	if err != nil {
 		log.Fatalf("Failed to write to device: %v", err)
 	}
@@ -393,4 +393,59 @@ func readRSAPublicKeyFromFile(filename string) ([]byte, error) {
 	}
 
 	return derBytes, nil
+}
+
+const ANDROID_PUBKEY_MODULUS_SIZE = 2048             // 假设设置公钥模数大小为 2048 位，需根据实际情况调整
+const ANDROID_PUBKEY_ENCODED_SIZE = 2048 + 4 + 4 + 4 // 根据公钥模数大小加上一些额外字段的大小
+
+func encodeRSAPublicKey(publicKey *big.Int) ([]byte, error) {
+	// 如果公钥长度小于 ANDROID_PUBKEY_MODULUS_SIZE，返回错误
+	if publicKey.BitLen() < ANDROID_PUBKEY_MODULUS_SIZE {
+		return nil, fmt.Errorf("Invalid key length %d", publicKey.BitLen())
+	}
+
+	// 创建字节缓冲区并设置小端序
+	keyStruct := make([]byte, ANDROID_PUBKEY_ENCODED_SIZE)
+	buffer := binary.LittleEndian
+
+	// 计算并存储 n0inv = -1 / N[0] mod 2 ^ 32
+	r32 := big.NewInt(1 << 32)
+	n0inv := new(big.Int).Set(publicKey)
+	tmp := new(big.Int).Set(publicKey)
+	// do n0inv mod r32
+	n0inv.Mod(n0inv, r32)
+	tmp.Set(n0inv)
+	n0inv.ModInverse(n0inv, r32)
+	tmp.Set(n0inv)
+	n0inv.Sub(r32, n0inv)
+
+	// 将 n0inv 写入 keyStruct
+	buffer.PutUint32(keyStruct[0:4], uint32(n0inv.Int64()))
+
+	// 将公钥 n 以小端序写入 keyStruct
+	nBytes := publicKey.Bytes()
+	for i, j := 0, len(nBytes)-1; i < j; i, j = i+1, j-1 {
+		nBytes[i], nBytes[j] = nBytes[j], nBytes[i]
+	}
+	copy(keyStruct[4:4+len(nBytes)], nBytes)
+
+	// 计算 rr
+	rr := new(big.Int).Set(publicKey)
+	rr.Lsh(rr, uint(ANDROID_PUBKEY_MODULUS_SIZE))
+	tmp.Set(rr)
+	rr.Exp(rr, big.NewInt(2), publicKey)
+
+	// 将 rr 以小端序写入 keyStruct
+	rrBytes := rr.Bytes()
+	for i, j := 0, len(rrBytes)-1; i < j; i, j = i+1, j-1 {
+		rrBytes[i], rrBytes[j] = rrBytes[j], rrBytes[i]
+	}
+	copy(keyStruct[4+len(nBytes):4+len(nBytes)+len(rrBytes)], rrBytes)
+
+	// 将公钥的指数 e 写入 keyStruct
+	// 这里假设公钥的指数 e 已知，比如 e := big.NewInt(65537)
+	e := big.NewInt(65537)
+	buffer.PutUint32(keyStruct[4+len(nBytes)+len(rrBytes):4+len(nBytes)+len(rrBytes)+4], uint32(e.Int64()))
+
+	return keyStruct, nil
 }

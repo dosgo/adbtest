@@ -137,6 +137,7 @@ func genPeerInfo(name string) []byte {
 	buf := new(bytes.Buffer)
 	// 编码公钥
 	publicKeybyte, _ := encodeRSAPublicKey(publicKey)
+	fmt.Printf("publicKey.E:%d\r\n", publicKey.E)
 	encodedPublicKey := base64.StdEncoding.EncodeToString(publicKeybyte)
 	if _, err := buf.Write([]byte(encodedPublicKey)); err != nil {
 		return nil
@@ -176,9 +177,9 @@ func main() {
 		InsecureSkipVerify: true,
 	}
 
-	var password = "614453"
+	var password = "185325"
 	// 使用TLS配置创建一个TCP连接
-	conn, err := tls.Dial("tcp", "192.168.78.209:41597", tlsConfig)
+	conn, err := tls.Dial("tcp", "192.168.78.209:42433", tlsConfig)
 	if err != nil {
 		log.Fatalf("Failed to connect: %v", err)
 	}

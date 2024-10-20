@@ -67,9 +67,7 @@ func (p *PairingAuthCtx) ProcessMsg(theirMsg []byte) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-
 	var keyInfo = "adb pairing_auth aes-128-gcm key"
-
 	// 创建一个新的HKDF实例，使用SHA-256作为哈希函数
 	hkdfExtractor := hkdf.New(sha256.New, buf, nil, []byte(keyInfo))
 
@@ -79,8 +77,6 @@ func (p *PairingAuthCtx) ProcessMsg(theirMsg []byte) (bool, error) {
 		fmt.Printf("Error generating key: %v\n", err)
 
 	}
-	fmt.Printf("p.secretKey[:]:%s\r\n", string(p.secretKey))
-
 	return true, nil
 }
 
@@ -98,8 +94,6 @@ func (p *PairingAuthCtx) Encrypt(in []byte) ([]byte, error) {
 	iv := make([]byte, gcmIVLen)
 	binary.LittleEndian.PutUint64(iv, p.encIV)
 	p.encIV++
-	log.Printf("iv:%v\r\n", iv)
-
 	return aesGCM.Seal(nil, iv, in, nil), nil
 }
 
@@ -133,22 +127,23 @@ func (p *PairingAuthCtx) Decrypt(in []byte) ([]byte, error) {
 func genPeerInfo(name string) []byte {
 	publicKey, _ := readRSAPublicKeyFromFile("ddd.pem")
 	ADB_RSA_PUB_KEY := byte(0)
+	bufByte := make([]byte, 8192)
 	// 创建一个足够大的缓冲区
 	buf := new(bytes.Buffer)
 	// 编码公钥
 	publicKeybyte, _ := encodeRSAPublicKey(publicKey)
-	fmt.Printf("publicKey.E:%d\r\n", publicKey.E)
 	encodedPublicKey := base64.StdEncoding.EncodeToString(publicKeybyte)
 	if _, err := buf.Write([]byte(encodedPublicKey)); err != nil {
 		return nil
 	}
-	fmt.Printf("encodedPublicKeylen%d\r\n", len(encodedPublicKey))
 	// 获取并写入用户信息
 	userInfo := fmt.Sprintf(" %s\x00", name)
 	if _, err := buf.Write([]byte(userInfo)); err != nil {
 		return nil
 	}
-	return append([]byte{ADB_RSA_PUB_KEY}, buf.Bytes()...)
+	bufByte[0] = ADB_RSA_PUB_KEY
+	copy(bufByte[1:], buf.Bytes())
+	return bufByte
 }
 
 func main() {
@@ -177,9 +172,9 @@ func main() {
 		InsecureSkipVerify: true,
 	}
 
-	var password = "185325"
+	var password = "303761"
 	// 使用TLS配置创建一个TCP连接
-	conn, err := tls.Dial("tcp", "192.168.78.209:42433", tlsConfig)
+	conn, err := tls.Dial("tcp", "192.168.78.209:34995", tlsConfig)
 	if err != nil {
 		log.Fatalf("Failed to connect: %v", err)
 	}
@@ -220,8 +215,6 @@ func main() {
 	}
 	serverMsg := buf[:n]
 
-	fmt.Printf("buf:%v\r\n", serverMsg)
-
 	ok, err := alice.ProcessMsg(serverMsg)
 	if !ok || err != nil {
 		log.Fatalf("Failed to process server message: %v", err)
@@ -229,7 +222,6 @@ func main() {
 
 	// 测试加密和解密
 	peerInfo := genPeerInfo("Dosgo")
-	fmt.Printf("peerInfo:%v\r\n", peerInfo)
 	ciphertext, err := alice.Encrypt(peerInfo)
 	if err != nil {
 		log.Fatalf("Failed to encrypt: %v", err)

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/hashicorp/mdns"
 	"github.com/oleksandr/bonjour"
 )
 
@@ -45,4 +46,18 @@ func StartScanAddr() error {
 
 func StopScanAddr() {
 	resolver.Exit <- true
+}
+
+func DDD() {
+	// Make a channel for results and start listening
+	entriesCh := make(chan *mdns.ServiceEntry, 4)
+	go func() {
+		for entry := range entriesCh {
+			fmt.Printf("Got new entry: %v\n", entry)
+		}
+	}()
+
+	// Start the lookup
+	mdns.Lookup(fmt.Sprintf("_%s._tcp", SERVICE_TYPE_ADB), entriesCh)
+	//close(entriesCh)
 }

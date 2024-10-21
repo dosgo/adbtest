@@ -4,6 +4,7 @@ go 1.22.7
 
 require (
 	github.com/dosgo/spake2-go v0.0.0-20241019170010-3b8be66d26f7
+	github.com/hashicorp/mdns v1.0.5
 	github.com/oleksandr/bonjour v0.0.0-20210301155756-30f43c61b915
 	golang.org/x/crypto v0.28.0
 )

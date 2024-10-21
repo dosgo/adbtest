@@ -238,7 +238,7 @@ func packetHeader(version byte, msgType byte, payloadSize uint32) []byte {
 	return sendBuf.Bytes()
 }
 
-func generateCert(_certFile, keyFile string, peerName string) error {
+func generateCertbak(_certFile, keyFile string, peerName string) error {
 	// 生成 RSA 私钥
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -274,6 +274,50 @@ func generateCert(_certFile, keyFile string, peerName string) error {
 	pem.Encode(privateKeyFile, privateKeyPEM)
 
 	// 编码证书为 PEM 格式并写入文件
+	certPEM := &pem.Block{Type: "CERTIFICATE", Bytes: derBytes}
+	certFile, err := os.Create(_certFile)
+	if err != nil {
+		log.Fatalf("创建证书文件失败: %v", err)
+	}
+	defer certFile.Close()
+	pem.Encode(certFile, certPEM)
+	return nil
+}
+
+func generateCert(_certFile, keyFile string, peerName string) error {
+	// 生成 RSA 私钥
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return err
+	}
+
+	// 创建证书模板
+	template := x509.Certificate{
+		Version:               2,
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: peerName},
+		Issuer:                pkix.Name{CommonName: peerName},
+		NotBefore:             time.Now(),
+		NotAfter:              time.Now().AddDate(1, 0, 0),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+
+	// 自签名证书
+	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &privateKey.PublicKey, privateKey)
+	if err != nil {
+		return err
+	}
+	// 编码私钥为 PEM 格式并写入文件
+	privateKeyPEM := &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(privateKey)}
+	privateKeyFile, err := os.Create(keyFile)
+	if err != nil {
+		log.Fatalf("创建私钥文件失败: %v", err)
+	}
+	defer privateKeyFile.Close()
+	pem.Encode(privateKeyFile, privateKeyPEM)
+
 	certPEM := &pem.Block{Type: "CERTIFICATE", Bytes: derBytes}
 	certFile, err := os.Create(_certFile)
 	if err != nil {

@@ -133,7 +133,10 @@ func (adbClient *AdbClient) Connect(addr string) error {
 	time.Sleep(time.Second * 1)
 
 	certificates, err := tls.LoadX509KeyPair(adbClient.CertFile, adbClient.KeyFile)
-
+	if err != nil {
+		fmt.Printf("certificates error err:%+v\r\n", err)
+		return err
+	}
 	tlsConfig := &tls.Config{
 		// 客户端证书和私钥
 		Certificates: []tls.Certificate{

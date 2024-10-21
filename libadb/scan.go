@@ -39,6 +39,7 @@ func StartScanAddr() error {
 	if err != nil {
 		return err
 	}
+	fmt.Printf("dddd")
 	return nil
 }
 

@@ -70,6 +70,7 @@ func (adbClient *AdbClient) Pair(password string, addr string) error {
 	// 创建TLS配置，并设置客户端证书
 	tlsConfig := &tls.Config{
 		Certificates:       []tls.Certificate{clientCert},
+		ClientAuth:         tls.RequireAndVerifyClientCert,
 		InsecureSkipVerify: true,
 	}
 
@@ -254,6 +255,7 @@ func generateCert(_certFile, keyFile string, peerName string) error {
 		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		BasicConstraintsValid: true,
+		IsCA:                  true,
 	}
 
 	// 自签名证书

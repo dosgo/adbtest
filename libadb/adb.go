@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"time"
 )
 
 const ADB_HEADER_LENGTH = 24
@@ -120,7 +121,7 @@ func (adbClient *AdbClient) Connect(addr string) error {
 	if message.command != uint32(A_STLS) {
 		return errors.New("Not STLS command")
 	}
-	log.Printf("STLS Received\r\n")
+	log.Printf("STLS Received message.command:%d\r\n", message.command)
 
 	// Send STLS packet
 
@@ -129,6 +130,7 @@ func (adbClient *AdbClient) Connect(addr string) error {
 	log.Printf("STLS Sent\r\n")
 
 	log.Printf("TLS Handshake begin\r\n")
+	time.Sleep(time.Second * 1)
 
 	certificates, err := tls.LoadX509KeyPair(adbClient.CertFile, adbClient.KeyFile)
 
@@ -137,16 +139,12 @@ func (adbClient *AdbClient) Connect(addr string) error {
 		Certificates: []tls.Certificate{
 			certificates,
 		},
-		ServerName:         "",
+		ServerName:         addr,
 		InsecureSkipVerify: true,
 		ClientAuth:         tls.RequireAndVerifyClientCert,
 	}
 
 	tlsconn := tls.Client(conn, tlsConfig)
-
-	if err = tlsconn.Handshake(); err != nil {
-		return err
-	}
 
 	message_raw = make([]byte, ADB_HEADER_LENGTH)
 	_, err = io.ReadFull(tlsconn, message_raw)

@@ -156,8 +156,6 @@ func (adbClient *AdbClient) Connect(addr string) error {
 
 	// 设置密钥对
 	tlsconn := tls.Client(conn, &tlsConfig)
-	tlsconn.Handshake()
-
 	message_raw = make([]byte, ADB_HEADER_LENGTH)
 	_, err = io.ReadFull(tlsconn, message_raw)
 	fmt.Printf("werr:%+v\r\n", err)

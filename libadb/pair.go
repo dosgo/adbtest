@@ -72,6 +72,7 @@ func (adbClient *AdbClient) Pair(password string, addr string) error {
 	tlsConfig := &tls.Config{
 		Certificates:       []tls.Certificate{clientCert},
 		InsecureSkipVerify: true,
+		ClientAuth:         tls.RequireAnyClientCert,
 	}
 
 	// 使用TLS配置创建一个TCP连接
@@ -253,14 +254,13 @@ func generateCert(_certFile, keyFile string, peerName string) error {
 	// 创建证书模板
 	template := x509.Certificate{
 		Version:               2,
-		SerialNumber:          big.NewInt(1),
+		SerialNumber:          big.NewInt(time.Now().Unix()),
 		Subject:               pkix.Name{CommonName: peerName},
 		Issuer:                pkix.Name{CommonName: peerName},
 		NotBefore:             time.Now().AddDate(0, 0, -1),
 		NotAfter:              time.Now().AddDate(1, 0, 0),
-		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
-		BasicConstraintsValid: true,
-		IsCA:                  true,
+		BasicConstraintsValid: false,
+		IsCA:                  false,
 	}
 
 	// 自签名证书

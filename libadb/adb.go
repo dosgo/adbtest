@@ -2,6 +2,7 @@ package libadb
 
 import (
 	"bytes"
+	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/binary"
@@ -10,7 +11,6 @@ import (
 	"io"
 	"log"
 	"net"
-	"time"
 )
 
 const ADB_HEADER_LENGTH = 24
@@ -130,7 +130,6 @@ func (adbClient *AdbClient) Connect(addr string) error {
 	log.Printf("STLS Sent\r\n")
 
 	log.Printf("TLS Handshake begin\r\n")
-	time.Sleep(time.Second * 1)
 
 	certificates, err := tls.LoadX509KeyPair(adbClient.CertFile, adbClient.KeyFile)
 	if err != nil {
@@ -138,15 +137,27 @@ func (adbClient *AdbClient) Connect(addr string) error {
 		return err
 	}
 
-	tlsConfig := &tls.Config{
+	tlsConfig := tls.Config{
+		MinVersion: tls.VersionTLS13,
+		MaxVersion: tls.VersionTLS13,
 		// 客户端证书和私钥
 		Certificates: []tls.Certificate{
 			certificates,
 		},
+		ServerName:         adbClient.PeerName,
 		InsecureSkipVerify: true, // 不要跳过证书验证
+		RootCAs:            x509.NewCertPool(),
+		ClientCAs:          x509.NewCertPool(),
+		ClientAuth:         tls.RequireAnyClientCert,
 	}
+	x509Cert, err := x509.ParseCertificate(certificates.Certificate[0])
+	xx := x509Cert.PublicKey.(*rsa.PublicKey)
 
-	tlsconn := tls.Client(conn, tlsConfig)
+	fmt.Printf("x509Cert:%+v\r\n\r\n", xx.N.Bytes())
+	fmt.Printf("tlsConfig:%+v\r\n", tlsConfig)
+	// 设置密钥对
+
+	tlsconn := tls.Client(conn, &tlsConfig)
 	tlsconn.Handshake()
 
 	fmt.Printf("tlsconn.ConnectionState().CipherSuite:%+v\r\n", tls.CipherSuiteName(tlsconn.ConnectionState().CipherSuite))

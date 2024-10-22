@@ -96,6 +96,19 @@ func VerifyCustomPeerCertificate(rawCerts [][]byte, verifiedChains [][]*x509.Cer
 }
 
 func (adbClient *AdbClient) Connect(addr string) error {
+	customVerify := func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+
+		for _, certBytes := range rawCerts {
+			cert, err := x509.ParseCertificate(certBytes)
+			if err != nil {
+				return err
+			}
+			// 这里可以进行更复杂的证书验证逻辑，比如检查证书有效期、主题等
+			log.Printf("Subject: %v\n", cert.Subject)
+		}
+		return nil
+
+	}
 
 	// 使用TLS配置创建一个TCP连接
 	conn, err := net.Dial("tcp", addr)
@@ -137,17 +150,45 @@ func (adbClient *AdbClient) Connect(addr string) error {
 		fmt.Printf("certificates error err:%+v\r\n", err)
 		return err
 	}
+	x509Cert, err := x509.ParseCertificate(certificates.Certificate[0])
+	log.Printf("x509Cert :%+v\r\n", x509Cert)
+	caCertPool := x509.NewCertPool()
+	caCertPool.AddCert(x509Cert)
 	tlsConfig := &tls.Config{
+		RootCAs: caCertPool,
 		// 客户端证书和私钥
 		Certificates: []tls.Certificate{
 			certificates,
 		},
-		ServerName:         addr,
-		InsecureSkipVerify: true,
-		ClientAuth:         tls.RequireAndVerifyClientCert,
+		ServerName: "My Awesome App",
+		//PreferServerCipherSuites: true,
+		VerifyPeerCertificate: customVerify,
+		MinVersion:            tls.VersionTLS13, // 指定最小版本为TLS 1.3
+		//	Certificates:             []tls.Certificate{cert},
+		InsecureSkipVerify:       true, // 不要跳过证书验证
+		PreferServerCipherSuites: true,
+
+		//InsecureSkipVerify:    true,
+
+		//ClientAuth:   tls.RequireAndVerifyClientCert,
+		VerifyConnection: func(cs tls.ConnectionState) error {
+			opts := x509.VerifyOptions{
+				DNSName:       cs.ServerName,
+				Intermediates: x509.NewCertPool(),
+			}
+			for _, cert := range cs.PeerCertificates[1:] {
+				opts.Intermediates.AddCert(cert)
+			}
+			return nil
+		},
 	}
 
 	tlsconn := tls.Client(conn, tlsConfig)
+	tlsconn.Handshake()
+
+	fmt.Printf("tlsconn.ConnectionState().CipherSuite:%+v\r\n", tls.CipherSuiteName(tlsconn.ConnectionState().CipherSuite))
+	fmt.Printf("tlsconn.ConnectionState().HandshakeComplete:%+v\r\n", tlsconn.ConnectionState().HandshakeComplete)
+	fmt.Printf("tls Version:%+v\r\n", tlsconn.ConnectionState().Version)
 
 	message_raw = make([]byte, ADB_HEADER_LENGTH)
 	_, err = io.ReadFull(tlsconn, message_raw)

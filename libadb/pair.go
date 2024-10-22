@@ -10,6 +10,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/pem"
@@ -55,6 +56,19 @@ func createPairingAuthCtx(myRole int, _password []byte) (*PairingAuthCtx, error)
 }
 
 func (adbClient *AdbClient) Pair(password string, addr string) error {
+	customVerify := func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+
+		for _, certBytes := range rawCerts {
+			cert, err := x509.ParseCertificate(certBytes)
+			if err != nil {
+				//return err
+			}
+			// 这里可以进行更复杂的证书验证逻辑，比如检查证书有效期、主题等
+			log.Printf("Subject: %v\n", cert.Subject)
+		}
+		return nil
+
+	}
 
 	if !fileExists(adbClient.CertFile) || !fileExists(adbClient.KeyFile) {
 		err := generateCert(adbClient.CertFile, adbClient.KeyFile, adbClient.PeerName)
@@ -67,11 +81,13 @@ func (adbClient *AdbClient) Pair(password string, addr string) error {
 	if err != nil {
 		return err
 	}
+
 	// 创建TLS配置，并设置客户端证书
 	tlsConfig := &tls.Config{
-		Certificates:       []tls.Certificate{clientCert},
-		ClientAuth:         tls.RequireAndVerifyClientCert,
-		InsecureSkipVerify: true,
+		Certificates:          []tls.Certificate{clientCert},
+		ClientAuth:            tls.RequireAndVerifyClientCert,
+		VerifyPeerCertificate: customVerify,
+		InsecureSkipVerify:    true,
 	}
 
 	// 使用TLS配置创建一个TCP连接
@@ -127,15 +143,19 @@ func (adbClient *AdbClient) Pair(password string, addr string) error {
 	if err != nil {
 		return err
 	}
-	readPacketHeader(conn)
+	_, _, bufLen := readPacketHeader(conn)
+
 	// 读取并解密设备的响应
-	n, err = conn.Read(buf)
+	peerInfoBuf := make([]byte, bufLen)
+	n, err = conn.Read(peerInfoBuf)
 	if err != nil {
+		log.Printf("read err:%+v\r\n", err)
 		return err
 	}
-	encryptedResponse := buf[:n]
+	encryptedResponse := peerInfoBuf[:n]
 	_, err = alice.Decrypt(encryptedResponse)
 	if err != nil {
+		log.Printf("encrypted err:%+v\r\n", err)
 		return err
 	}
 	return nil
@@ -178,12 +198,13 @@ func (p *PairingAuthCtx) Encrypt(in []byte) ([]byte, error) {
 }
 
 func (p *PairingAuthCtx) Decrypt(in []byte) ([]byte, error) {
-	block, err := aes.NewCipher(p.secretKey[:])
+	block, err := aes.NewCipher(p.secretKey)
 	if err != nil {
 		return nil, err
 	}
 	aesGCM, err := cipher.NewGCM(block)
 	if err != nil {
+		log.Printf("aesGCM err:%+v\r\n", err)
 		return nil, err
 	}
 	iv := make([]byte, gcmIVLen)
@@ -198,6 +219,85 @@ func (p *PairingAuthCtx) Decrypt(in []byte) ([]byte, error) {
 		return nil, err
 	}
 	return plaintext, nil
+}
+
+func privateAdbConnectionManager(_certFile, keyFile string, peerName string) error {
+	// 这里暂不实现 setApi 方法的等价操作
+
+	keySize := 2048
+	keyPairGenerator, err := rsa.GenerateKey(rand.Reader, keySize)
+	if err != nil {
+		return err
+	}
+	publicKey := keyPairGenerator.PublicKey
+	privateKey := keyPairGenerator
+	subject := "CN=" + peerName
+	//algorithmName := "SHA512withRSA"
+	//expiryDate := time.Now().Add(time.Hour * 24).UnixMilli()
+	certificateExtensions := make(map[string]asn1.ObjectIdentifier)
+	//subjectKeyIdentifier, err := generateSubjectKeyIdentifier(&publicKey)
+	if err != nil {
+		return err
+	}
+	//certificateExtensions["SubjectKeyIdentifier"] = subjectKeyIdentifier
+	x500Name := pkix.Name{CommonName: subject}
+	//	notBefore := time.Now()
+	//notAfter := time.UnixMilli(expiryDate)
+	//privateKeyUsage := generatePrivateKeyUsageExtension(notBefore, notAfter)
+	//certificateExtensions["PrivateKeyUsage"] = privateKeyUsage
+	//	certificateValidity := x509.CertificateValidity{NotBefore: notBefore, NotAfter: notAfter}
+	x509CertInfo := x509.Certificate{
+		Version:      2,
+		SerialNumber: big.NewInt(int64(os.Getpid())),
+		Subject:      x500Name,
+		PublicKey:    publicKey,
+		//	Validity:     certificateValidity,
+		IsCA: false,
+	}
+	x509CertInfo.ExtraExtensions = generateExtraExtensions(certificateExtensions)
+	derBytes, err := x509.CreateCertificate(rand.Reader, &x509CertInfo, &x509CertInfo, &publicKey, privateKey)
+	if err != nil {
+		return err
+	}
+
+	// 编码私钥为 PEM 格式并写入文件
+	privateKeyPEM := &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(privateKey)}
+	privateKeyFile, err := os.Create(keyFile)
+	if err != nil {
+		log.Fatalf("创建私钥文件失败: %v", err)
+	}
+	defer privateKeyFile.Close()
+	pem.Encode(privateKeyFile, privateKeyPEM)
+
+	// 编码证书为 PEM 格式并写入文件
+	certPEM := &pem.Block{Type: "CERTIFICATE", Bytes: derBytes}
+	certFile, err := os.Create(_certFile)
+	if err != nil {
+		log.Fatalf("创建证书文件失败: %v", err)
+	}
+	defer certFile.Close()
+	pem.Encode(certFile, certPEM)
+	return nil
+}
+
+func generateExtraExtensions(extensions map[string]asn1.ObjectIdentifier) []pkix.Extension {
+	var result []pkix.Extension
+	for key, value := range extensions {
+		result = append(result, pkix.Extension{Id: value, Critical: false, Value: []byte(key)})
+	}
+	return result
+}
+
+func generateSubjectKeyIdentifier(publicKey *rsa.PublicKey) (asn1.ObjectIdentifier, error) {
+	_, err := asn1.Marshal(publicKey)
+	if err != nil {
+		return nil, err
+	}
+	return asn1.ObjectIdentifier{2, 5, 29, 14}, nil
+}
+
+func generatePrivateKeyUsageExtension(notBefore, notAfter time.Time) asn1.ObjectIdentifier {
+	return asn1.ObjectIdentifier{2, 5, 29, 15}
 }
 
 func readPacketHeader(r io.Reader) (byte, byte, uint32) {
@@ -248,7 +348,7 @@ func generateCertbak(_certFile, keyFile string, peerName string) error {
 	template := x509.Certificate{
 		SerialNumber: big.NewInt(1),
 		Subject: pkix.Name{
-			CommonName: peerName,
+			CommonName: "CN=" + peerName,
 		},
 		NotBefore:             time.Now(),
 		NotAfter:              time.Now().AddDate(1, 0, 0),
@@ -297,7 +397,7 @@ func generateCert(_certFile, keyFile string, peerName string) error {
 		SerialNumber:          big.NewInt(1),
 		Subject:               pkix.Name{CommonName: peerName},
 		Issuer:                pkix.Name{CommonName: peerName},
-		NotBefore:             time.Now(),
+		NotBefore:             time.Now().AddDate(0, 0, -1),
 		NotAfter:              time.Now().AddDate(1, 0, 0),
 		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
 		BasicConstraintsValid: true,

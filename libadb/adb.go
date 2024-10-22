@@ -2,7 +2,6 @@ package libadb
 
 import (
 	"bytes"
-	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/binary"
@@ -150,19 +149,14 @@ func (adbClient *AdbClient) Connect(addr string) error {
 		ClientCAs:          x509.NewCertPool(),
 		ClientAuth:         tls.RequireAnyClientCert,
 	}
-	x509Cert, err := x509.ParseCertificate(certificates.Certificate[0])
-	xx := x509Cert.PublicKey.(*rsa.PublicKey)
+	//这个设置证书才行
+	tlsConfig.GetClientCertificate = func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+		return &certificates, nil
+	}
 
-	fmt.Printf("x509Cert:%+v\r\n\r\n", xx.N.Bytes())
-	fmt.Printf("tlsConfig:%+v\r\n", tlsConfig)
 	// 设置密钥对
-
 	tlsconn := tls.Client(conn, &tlsConfig)
 	tlsconn.Handshake()
-
-	fmt.Printf("tlsconn.ConnectionState().CipherSuite:%+v\r\n", tls.CipherSuiteName(tlsconn.ConnectionState().CipherSuite))
-	fmt.Printf("tlsconn.ConnectionState().HandshakeComplete:%+v\r\n", tlsconn.ConnectionState().HandshakeComplete)
-	fmt.Printf("tls Version:%+v\r\n", tlsconn.ConnectionState().Version)
 
 	message_raw = make([]byte, ADB_HEADER_LENGTH)
 	_, err = io.ReadFull(tlsconn, message_raw)

@@ -115,8 +115,8 @@ func (adbClient *AdbClient) Pair(password string, addr string) error {
 		return err
 	}
 
-	// 测试加密和解密
-	peerInfo := adbClient.genPeerInfo()
+	//
+	peerInfo := adbClient.genPeerInfo(&clientCert.PrivateKey.(*rsa.PrivateKey).PublicKey)
 	ciphertext, err := alice.Encrypt(peerInfo)
 	if err != nil {
 		return err
@@ -222,7 +222,6 @@ func readPacketHeader(r io.Reader) (byte, byte, uint32) {
 	if err := binary.Read(r, binary.BigEndian, &payloadSize); err != nil {
 		return version, msgType, payloadSize
 	}
-
 	return version, msgType, payloadSize
 }
 
@@ -364,10 +363,9 @@ func bigEndianToLittleEndianPadded(size int, data []byte) []byte {
 	return result
 }
 
-func (adbClient *AdbClient) genPeerInfo() []byte {
-	publicKey, _ := readRSAPublicKeyFromFile(adbClient.CertFile)
+func (adbClient *AdbClient) genPeerInfo(publicKey *rsa.PublicKey) []byte {
 	ADB_RSA_PUB_KEY := byte(0)
-	bufByte := make([]byte, 8192)
+	bufByte := make([]byte, 8192) //这个必须大点
 	// 创建一个足够大的缓冲区
 	buf := new(bytes.Buffer)
 	// 编码公钥

@@ -15,12 +15,14 @@ import (
 
 func main() {
 
-	var adbClient = libadb.AdbClient{"cert.pem", "privateok.key", "uuuu111"}
-	err := adbClient.Pair("219444", "192.168.78.34:35391")
-	fmt.Printf("err:%+v\r\n", err)
+	var adbClient = libadb.AdbClient{CertFile: "adbkey.pub", KeyFile: "adbkey.key", PeerName: "test"}
+	//err := adbClient.Pair("220360", "172.30.16.133:39163")
+	//fmt.Printf("err:%+v\r\n", err)
 	time.Sleep(time.Second * 1)
-	adbClient.Connect("192.168.78.34:33285")
+	adbClient.Connect("172.30.16.133:36695")
 
+	adbClient.Shell("ls / ")
+	//	libadb.ScanTest()
 	fmt.Println("按任意键继续...")
 	bufio.NewReader(os.Stdin).ReadByte()
 }

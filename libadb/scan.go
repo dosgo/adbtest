@@ -1,89 +1,45 @@
 package libadb
 
 import (
-	"bufio"
 	"context"
 	"fmt"
-	"log"
-	"os"
-	"time"
 
 	"github.com/grandcat/zeroconf"
-	"github.com/oleksandr/bonjour"
 )
 
 var SERVICE_TYPE_ADB = "adb"
 var SERVICE_TYPE_TLS_PAIRING = "adb-tls-pairing"
 var SERVICE_TYPE_TLS_CONNECT = "adb-tls-connect"
-var resolver *bonjour.Resolver
 
-func StartScanAddr() error {
-	var err error
-	resolver, err = bonjour.NewResolver(nil)
+func (adbClient *AdbClient) scanAddr(ctx context.Context, code int) error {
+	resolver, err := zeroconf.NewResolver(nil)
 	if err != nil {
 		return err
 	}
-
-	results := make(chan *bonjour.ServiceEntry)
-	go func(results chan *bonjour.ServiceEntry) {
-		for e := range results {
-			log.Printf("%s", e.Instance)
-
+	entries := make(chan *zeroconf.ServiceEntry)
+	go func(results <-chan *zeroconf.ServiceEntry) {
+		for entry := range results {
+			if code == 0 {
+				adbClient.Connect(fmt.Sprintf("%s:%d", entry.AddrIPv4, entry.Port))
+			} else {
+				adbClient.Pair(fmt.Sprintf("%d", code), fmt.Sprintf("%s:%d", entry.AddrIPv4, entry.Port))
+				fmt.Printf("pair addr:%s:%d\r\n", entry.AddrIPv4, entry.Port)
+			}
 		}
-	}(results)
-
-	err = resolver.Lookup("adbtest", fmt.Sprintf("_%s._tcp", SERVICE_TYPE_ADB), "", results)
-	if err != nil {
-		return err
+	}(entries)
+	if code == 0 {
+		resolver.Browse(ctx, fmt.Sprintf("_%s._tcp", SERVICE_TYPE_TLS_CONNECT), "local.", entries)
+	} else {
+		resolver.Browse(ctx, fmt.Sprintf("_%s._tcp", SERVICE_TYPE_TLS_PAIRING), "local.", entries)
 	}
-	err = resolver.Lookup("adbtest", fmt.Sprintf("_%s._tcp", SERVICE_TYPE_TLS_PAIRING), "", results)
-	if err != nil {
-		return err
-	}
-	err = resolver.Lookup("adbtest", fmt.Sprintf("_%s._tcp", SERVICE_TYPE_TLS_CONNECT), "", results)
-	if err != nil {
-		return err
-	}
-	fmt.Printf("dddd")
 	return nil
 }
 
-func StopScanAddr() {
-	resolver.Exit <- true
+func (adbClient *AdbClient) ScanConnect(ctx context.Context) error {
+	adbClient.scanAddr(ctx, 0)
+	return nil
 }
-
-func ScanTest() {
-	resolver, err := zeroconf.NewResolver(nil)
-	if err != nil {
-		log.Fatalln("Failed to initialize resolver:", err.Error())
-	}
-
-	entries := make(chan *zeroconf.ServiceEntry)
-	go scanRes(entries)
-
-	entries1 := make(chan *zeroconf.ServiceEntry)
-	go scanRes(entries1)
-
-	entries2 := make(chan *zeroconf.ServiceEntry)
-	go scanRes(entries2)
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*30)
-	defer cancel()
-	err = resolver.Browse(ctx, fmt.Sprintf("_%s._tcp", SERVICE_TYPE_ADB), "", entries)
-	err = resolver.Browse(ctx, fmt.Sprintf("_%s._tcp", SERVICE_TYPE_TLS_PAIRING), "", entries1)
-	err = resolver.Browse(ctx, fmt.Sprintf("_%s._tcp", SERVICE_TYPE_TLS_CONNECT), "", entries2)
-	if err != nil {
-		log.Fatalln("Failed to browse:", err.Error())
-	}
-	fmt.Println("按任意键继续...")
-	bufio.NewReader(os.Stdin).ReadByte()
-	<-ctx.Done()
-	//close(entriesCh)
-}
-
-func scanRes(results <-chan *zeroconf.ServiceEntry) {
-	for entry := range results {
-		log.Println(entry)
-	}
-	log.Println("No more entries.")
+func (adbClient *AdbClient) ScanPair(ctx context.Context, code int) error {
+	adbClient.scanAddr(ctx, code)
+	return nil
 }

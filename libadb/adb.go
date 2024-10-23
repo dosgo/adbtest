@@ -252,7 +252,7 @@ func (adbClient *AdbClient) Ls(path string) error {
 	adbClient.AdbConn.Write(wrte_message)
 
 	//wrte
-	var wrte_message = generate_message(A_WRTE, adbClient.LocalId, 0, []byte{})
+	wrte_message = generate_message(A_WRTE, adbClient.LocalId, 0, []byte{})
 	adbClient.AdbConn.Write(wrte_message)
 
 	// Read WRTE

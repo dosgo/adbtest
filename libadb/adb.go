@@ -23,6 +23,20 @@ const A_WRTE uint32 = 0x45545257
 const A_STLS uint32 = 0x534c5453
 const A_AUTH uint32 = 0x48545541
 
+/*
+#define ID_STAT MKID('S','T','A','T')
+#define ID_LIST MKID('L','I','S','T')
+#define ID_ULNK MKID('U','L','N','K')
+#define ID_SEND MKID('S','E','N','D')
+#define ID_RECV MKID('R','E','C','V')
+#define ID_DENT MKID('D','E','N','T')
+#define ID_DONE MKID('D','O','N','E')
+#define ID_DATA MKID('D','A','T','A')
+#define ID_OKAY MKID('O','K','A','Y')
+#define ID_FAIL MKID('F','A','I','L')
+#define ID_QUIT MKID('Q','U','I','T')
+*/
+
 // wireless debug introduced in Android 11, so must use TLS
 const A_VERSION uint32 = 0x01000001
 const MAX_PAYLOAD int32 = 1024 * 1024
@@ -33,6 +47,10 @@ const ADB_AUTH_SIGNATURE uint32 = 2
 
 const ADB_AUTH_RSAPUBLICKEY = 3
 
+func mkid(buf []byte) uint32 {
+	return uint32(buf[0]) | (uint32(buf[1]) << 8) | (uint32(buf[2]) << 16) | (uint32(buf[3]) << 24)
+}
+
 type Message struct {
 	command     uint32
 	arg0        uint32
@@ -41,6 +59,11 @@ type Message struct {
 	data_check  uint32
 	magic       uint32
 	payload     []byte
+}
+
+type SyncMsg struct {
+	id      uint32
+	namelen uint32
 }
 
 type AdbClient struct {
@@ -107,6 +130,13 @@ func message_parse(conn net.Conn) (Message, error) {
 	return header, nil
 }
 
+func generate_sync_message(id []byte, len uint32) []byte {
+	var message bytes.Buffer
+	message.Write(id)
+	binary.Write(&message, binary.LittleEndian, len)
+	return message.Bytes()
+}
+
 func (adbClient *AdbClient) Connect(addr string) error {
 
 	conn, err := net.Dial("tcp", addr)
@@ -124,16 +154,11 @@ func (adbClient *AdbClient) Connect(addr string) error {
 
 	// Read STLS command
 	var message, _ = message_parse(conn)
-	fmt.Printf("message:%+v\r\n", message)
 	//tls auth
 	if message.command == A_STLS {
-		log.Printf("STLS Received message.command:%d\r\n", message.command)
 		// Send STLS packet
 		var stls_message = generate_message(A_STLS, A_STLS_VERSION, 0, []byte{})
 		conn.Write(stls_message)
-		log.Printf("STLS Sent\r\n")
-
-		log.Printf("TLS Handshake begin\r\n")
 
 		certificates, err := tls.LoadX509KeyPair(adbClient.CertFile, adbClient.KeyFile)
 		if err != nil {
@@ -190,8 +215,6 @@ func (adbClient *AdbClient) Connect(addr string) error {
 	}
 	message, _ = message_parse(conn)
 	log.Printf("CNXN Received\r\n")
-	log.Printf("CNXN data: %+v\r\n", string(message.payload))
-
 	adbClient.AdbConn = conn
 
 	return nil
@@ -235,7 +258,7 @@ func (adbClient *AdbClient) Ls(path string) error {
 	}
 	adbClient.LocalId++
 	// Send OPEN
-	var shell_cmd = "sync:\x00"
+	var shell_cmd = "sync:"
 	var open_message = generate_message(A_OPEN, adbClient.LocalId, 0, []byte(shell_cmd))
 	adbClient.AdbConn.Write(open_message)
 	log.Printf("OPEN Sent\r\n")
@@ -245,22 +268,40 @@ func (adbClient *AdbClient) Ls(path string) error {
 	if message.command != uint32(A_OKAY) {
 		log.Println("Not OKAY command")
 	}
-	log.Printf("OKAY Received:%+v\r\n", message.payload)
+	log.Printf("OKAY message1:%+v\r\n", message)
 
-	//wrte
-	var wrte_message = generate_message(A_WRTE, adbClient.LocalId, 0, []byte{})
+	//wrte_
+	list_message := generate_sync_message([]byte("LIST"), uint32(len(path)))
+	wrte_message := generate_message(A_WRTE, adbClient.LocalId, 0, append(list_message, []byte(path)...))
 	adbClient.AdbConn.Write(wrte_message)
 
-	//wrte
-	wrte_message = generate_message(A_WRTE, adbClient.LocalId, 0, []byte{})
-	adbClient.AdbConn.Write(wrte_message)
+	//list
+
+	//list_message := generate_sync_message([]byte("LIST"), uint32(len(path)))
+	//adbClient.AdbConn.Write(wrte_message)
+	//adbClient.AdbConn.Write([]byte(path))
+	//fmt.Printf("list_message:%+v\r\n", list_message)
+	//adbClient.AdbConn.Write(list_message)
+	//adbClient.AdbConn.Write([]byte(path))
+	//list
+	//pathLen := len(path)
+	//wrte_message = generate_sync_message(mkid([]byte("LIST")), uint32(pathLen))
+	//adbClient.AdbConn.Write(wrte_message)
+	//adbClient.AdbConn.Write([]byte(path))
+
+	var buffer = make([]byte, 9612)
+	eee, _ := adbClient.AdbConn.Read(buffer)
+	fmt.Printf("bufff:%+v\r\n", buffer[:eee])
+
+	message, _ = message_parse(adbClient.AdbConn)
+	log.Printf("WRTE111 message command:%+v\r\n", message.command)
 
 	// Read WRTE
 	message, _ = message_parse(adbClient.AdbConn)
 	if message.command != uint32(A_WRTE) {
 		log.Println("Not WRTE command")
 	}
-	log.Printf("WRTE Received:%+v\r\n", string(message.payload))
+	log.Printf("WRTE222 message command:%+v\r\n", message)
 
 	// Send OKAY
 	var okay_message = generate_message(A_OKAY, adbClient.LocalId, 0, []byte{})
@@ -319,13 +360,17 @@ func (adbClient *AdbClient) Push(path string) error {
 	}
 	log.Printf("OKAY Received:%+v\r\n", message.payload)
 
+	//list
+	wrte_message := generate_message(A_WRTE, adbClient.LocalId, 0, []byte{})
+	adbClient.AdbConn.Write(wrte_message)
+
 	// Read WRTE
 	message, _ = message_parse(adbClient.AdbConn)
-	if message.command != uint32(A_WRTE) {
+	if message.command != uint32(A_OKAY) {
 		log.Println("Not WRTE command")
 	}
 	log.Printf("WRTE Received:%+v\r\n", string(message.payload))
-
+	//A_CLSE
 	// Send OKAY
 	var okay_message = generate_message(A_OKAY, adbClient.LocalId, 0, []byte{})
 	adbClient.AdbConn.Write(okay_message)
